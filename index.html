@@ -113,7 +113,7 @@ async function verify(){const{error}=await sb.auth.mfa.challengeAndVerify({facto
  if(error){S.err="That code didn't work. Try the newest code from your app.";return render()}
  S.err="";await load()}
 async function signOut(){await sb.auth.signOut();Object.assign(S,{screen:"login",user:null,roles:[],emps:[],imp:null,err:"",em:""});render()}
-
+if(priv&&!factor&&C.requireMfa!==false){
 // ---------- Data ----------
 async function load(){
  const{data:me}=await sb.from("employees").select("*").eq("user_id",S.user.id).maybeSingle();S.me=me;
