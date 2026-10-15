@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>ESwari HRMS</title>
+<style>
+:root{--bg:#f4f7f8;--card:#fff;--ink:#12232e;--mute:#5d6f7a;--line:#dbe4e8;--acc:#0b6e6e;--acc2:#e6f3f3;--bad:#b3261e;--ok:#1a7f4b}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1a20;--card:#17262e;--ink:#e8f0f3;--mute:#9fb2bc;--line:#2a3d47;--acc:#4fc3c3;--acc2:#173a3d;--bad:#ff8a80;--ok:#6fdc9f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+h1{font-size:1.45rem;margin:0 0 .5rem}h2{font-size:1.1rem;margin:0 0 .5rem}
+.wrap{max-width:1000px;margin:0 auto;padding:16px}
+header{background:var(--card);border-bottom:1px solid var(--line)}
+header .wrap{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:10px 16px}
+.brand{font-weight:700;color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+.btn{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+.btn.alt{background:transparent;color:var(--acc);border:1px solid var(--acc)}.btn:disabled{opacity:.45;cursor:not-allowed}
+.link{background:none;border:0;color:var(--acc);cursor:pointer;font:inherit;padding:0;text-decoration:underline}
+input,select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+label{display:block;margin:10px 0 4px;font-weight:600;font-size:.9rem}
+.tbl{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:640px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--mute);font-size:.85rem}
+.pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:.78rem;font-weight:600;background:var(--acc2);color:var(--acc)}
+.pill.bad{background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}.pill.ok{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+.mute{color:var(--mute);font-size:.88rem}.err{color:var(--bad);margin-top:8px}
+.steps{display:flex;gap:6px;flex-wrap:wrap}.steps div{flex:1;min-width:90px;padding:8px;border:1px solid var(--line);border-radius:8px;text-align:center;font-size:.85rem;color:var(--mute)}.steps .cur{background:var(--acc2);border-color:var(--acc);color:var(--acc);font-weight:700}.steps .done{color:var(--ok);border-color:var(--ok)}
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:14px}
+.seg button{border:0;background:transparent;color:var(--ink);padding:7px 14px;cursor:pointer;font:inherit}.seg .on{background:var(--acc);color:#fff}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.center{max-width:420px;margin:48px auto}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90%}#toast.show{opacity:1}
+button:focus-visible,input:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="config.js"></script>
+</head><body>
+<div id="app"></div><div id="toast" role="status"></div>
+<script>
+const C=window.ESWARI||{};
+const S={screen:"boot",user:null,roles:[],me:null,emps:[],tab:"people",q:"",err:"",imp:null,showAdd:false,busy:false};
+const hashType=(location.hash.match(/type=(invite|recovery)/)||[])[1];
+let sb;
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const $=id=>document.getElementById(id);
+const val=id=>($(id)?$(id).value:"").trim();
+const isHR=()=>S.roles.includes("hr_admin");
+function keep(){const k={};document.querySelectorAll("#app input[id],#app select[id]").forEach(e=>{if(e.type!=="file")k[e.id]=e.type==="checkbox"?e.checked:e.value});render();
+ for(const id in k){const e=$(id);if(e){if(e.type==="checkbox")e.checked=k[id];else e.value=k[id]}}}
+function toast(m){const t=$("toast");t.textContent=m;t.className="show";setTimeout(()=>t.className="",2600)}
+
+// ---------- Validation (used by Excel import and the Add form) ----------
+const COLS=["emp_code","full_name","work_email","designation","department","joining_date","manager_code","pan","uan","esi_no","bank_name","bank_account","ifsc"];
+function toISO(v){let iso=null;
+ if(v instanceof Date){if(!isNaN(v))iso=new Date(v.getTime()+43200000).toISOString().slice(0,10)}
+ else{const s=String(v||"").trim();let m;
+  if(m=s.match(/^(\d{4})-(\d{2})-(\d{2})$/))iso=s;
+  else if(m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/))iso=m[3]+"-"+m[2].padStart(2,"0")+"-"+m[1].padStart(2,"0")}
+ if(!iso)return null;const d=new Date(iso+"T00:00:00Z");return!isNaN(d)&&d.toISOString().slice(0,10)===iso?iso:null}
+function validateRows(rows,existing){
+ const codes=new Set(existing.map(e=>e.emp_code.toLowerCase())),emails=new Set(existing.map(e=>e.work_email.toLowerCase()));
+ const inFile=new Set(rows.map(r=>String(r.emp_code||"").trim().toLowerCase()).filter(Boolean));
+ const seenC=new Set(),seenE=new Set(),errors=[],good=[];
+ rows.forEach((raw,i)=>{const r={};COLS.forEach(c=>{const v=raw[c];r[c]=v instanceof Date?v:String(v==null?"":v).trim()});
+  const n=i+2,bad=[];const add=(f,m)=>bad.push({row:n,field:f,msg:m});
+  ["emp_code","full_name","work_email","joining_date"].forEach(f=>{if(!r[f])add(f,"Required")});
+  const code=String(r.emp_code).toLowerCase(),mail=String(r.work_email).toLowerCase();
+  if(r.emp_code){if(codes.has(code))add("emp_code","Already exists in the system");else if(seenC.has(code))add("emp_code","Repeated in this file");seenC.add(code)}
+  if(r.work_email){if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.work_email))add("work_email","Not a valid email");
+   else if(emails.has(mail))add("work_email","Already exists in the system");else if(seenE.has(mail))add("work_email","Repeated in this file");seenE.add(mail)}
+  let iso=null;if(r.joining_date){iso=toISO(r.joining_date);if(!iso)add("joining_date","Use DD-MM-YYYY or YYYY-MM-DD")}
+  if(r.pan){r.pan=r.pan.toUpperCase();if(!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(r.pan))add("pan","PAN looks wrong (e.g. ABCDE1234F)")}
+  if(r.uan&&!/^\d{12}$/.test(r.uan))add("uan","UAN must be 12 digits");
+  if(r.ifsc){r.ifsc=r.ifsc.toUpperCase();if(!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(r.ifsc))add("ifsc","IFSC looks wrong (e.g. SBIN0001234)")}
+  if(r.bank_account&&!/^\d{6,18}$/.test(r.bank_account))add("bank_account","Account number must be 6 to 18 digits");
+  if(r.manager_code&&!codes.has(r.manager_code.toLowerCase())&&!inFile.has(r.manager_code.toLowerCase()))add("manager_code","Manager code not found");
+  if(bad.length)errors.push(...bad);else good.push({...r,joining_date:iso})});
+ return{good,errors,total:rows.length}}
+
+// ---------- Auth flow ----------
+async function boot(){
+ if(!C.url||!C.anonKey||!window.supabase){S.screen="noconfig";return render()}
+ sb=supabase.createClient(C.url,C.anonKey);
+ const{data}=await sb.auth.getSession();
+ if(!data.session){S.screen="login";return render()}
+ if(hashType){S.screen="setpw";return render()}
+ await afterAuth()}
+async function signIn(){S.err="";const{error}=await sb.auth.signInWithPassword({email:val("em"),password:$("pw").value});
+ if(error){S.err="Wrong email or password.";S.em=val("em");return render()}
+ await afterAuth()}
+async function forgot(){const em=val("em");if(!em){S.err="Type your email first, then click Forgot password.";return render()}
+ await sb.auth.resetPasswordForEmail(em,{redirectTo:location.origin});S.err="";toast("If that email has an account, a reset link is on its way.")}
+async function setPw(){const a=$("p1").value,b=$("p2").value;
+ if(a.length<10){S.err="Use at least 10 characters.";return render()}if(a!==b){S.err="The two passwords don't match.";return render()}
+ const{error}=await sb.auth.updateUser({password:a});if(error){S.err=error.message;return render()}
+ history.replaceState(null,"",location.pathname);S.err="";toast("Password saved");await afterAuth()}
+async function afterAuth(){
+ const{data:{user}}=await sb.auth.getUser();S.user=user;
+ const{data:r}=await sb.from("user_roles").select("role");S.roles=(r||[]).map(x=>x.role);
+ const priv=S.roles.includes("hr_admin")||S.roles.includes("finance");
+ const{data:a}=await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+ const{data:f}=await sb.auth.mfa.listFactors();
+ const factor=((f&&f.totp)||[]).find(x=>x.status==="verified");
+ if(factor&&a.currentLevel!=="aal2"){S.factor=factor.id;S.screen="mfa";return render()}
+ if(priv&&!factor&&C.requireMfa!==false){
+  for(const x of (f&&f.all)||[])if(x.status!=="verified")await sb.auth.mfa.unenroll({factorId:x.id});
+  const{data,error}=await sb.auth.mfa.enroll({factorType:"totp"});
+  if(error){S.err=error.message;S.screen="login";return render()}
+  S.enroll=data;S.factor=data.id;S.screen="enroll";return render()}
+ await load()}
+async function verify(){const{error}=await sb.auth.mfa.challengeAndVerify({factorId:S.factor,code:val("code")});
+ if(error){S.err="That code didn't work. Try the newest code from your app.";return render()}
+ S.err="";await load()}
+async function signOut(){await sb.auth.signOut();Object.assign(S,{screen:"login",user:null,roles:[],emps:[],imp:null,err:"",em:""});render()}
+
+// ---------- Data ----------
+async function load(){
+ const{data:me}=await sb.from("employees").select("*").eq("user_id",S.user.id).maybeSingle();S.me=me;
+ await loadEmps();S.screen="app";render()}
+async function loadEmps(){const{data,error}=await sb.from("employees")
+ .select("id,user_id,emp_code,full_name,work_email,designation,department,joining_date,status,manager_id").order("emp_code");
+ if(error)toast(error.message);S.emps=data||[]}
+async function insertRows(good){
+ const emps=good.map(r=>({emp_code:r.emp_code,full_name:r.full_name,work_email:r.work_email,designation:r.designation||null,department:r.department||null,joining_date:r.joining_date}));
+ const{data:ins,error}=await sb.from("employees").insert(emps).select("id,emp_code");if(error)throw error;
+ const idOf={};S.emps.concat(ins).forEach(e=>idOf[e.emp_code.toLowerCase()]=e.id);
+ const priv=good.filter(r=>r.pan||r.uan||r.esi_no||r.bank_name||r.bank_account||r.ifsc).map(r=>({employee_id:idOf[r.emp_code.toLowerCase()],
+  pan:r.pan||null,uan:r.uan||null,esi_no:r.esi_no||null,bank_name:r.bank_name||null,bank_account:r.bank_account||null,ifsc:r.ifsc||null}));
+ if(priv.length){const{error:e2}=await sb.from("employee_private").insert(priv);if(e2)throw e2}
+ const byMgr={};good.forEach(r=>{if(r.manager_code){const m=idOf[r.manager_code.toLowerCase()];(byMgr[m]=byMgr[m]||[]).push(idOf[r.emp_code.toLowerCase()])}});
+ for(const m in byMgr){const{error:e3}=await sb.from("employees").update({manager_id:m}).in("id",byMgr[m]);if(e3)throw e3}
+ return ins.length}
+async function addOne(){const row={};COLS.forEach(c=>row[c]=val("a_"+c));
+ const v=validateRows([row],S.emps);if(v.errors.length){S.err=v.errors.map(e=>e.field+": "+e.msg).join(". ");return keep()}
+ try{await insertRows(v.good);S.err="";S.showAdd=false;await loadEmps();render();toast("Employee added")}catch(e){S.err=e.message;render()}}
+function template(){const ws=XLSX.utils.aoa_to_sheet([COLS,["E001","Asha Raman","asha@company.in","Designer","Design","01-06-2024","","ABCDE1234F","123456789012","","SBI","123456789012","SBIN0001234"]]);
+ const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Employees");XLSX.writeFile(wb,"ESwari-employee-template.xlsx")}
+async function readFile(inp){const f=inp.files[0];if(!f)return;
+ try{const wb=XLSX.read(await f.arrayBuffer(),{type:"array",cellDates:true});
+  const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+  if(!rows.length){S.imp={empty:true};return render()}
+  S.imp=validateRows(rows,S.emps);S.imp.name=f.name}catch(e){S.imp={fail:true}}render()}
+async function doImport(){S.busy=true;render();
+ try{const n=await insertRows(S.imp.good);toast(n+" employees imported");S.imp=null;await loadEmps();S.tab="people"}catch(e){toast("Import failed: "+e.message)}
+ S.busy=false;render()}
+async function invite(ids){const{data:{session}}=await sb.auth.getSession();
+ const r=await fetch("/.netlify/functions/invite",{method:"POST",headers:{Authorization:"Bearer "+session.access_token,"Content-Type":"application/json"},body:JSON.stringify({employee_ids:ids})});
+ const j=await r.json();if(!r.ok)return toast(r.status===404?"The invite function was not found (404). Check the netlify folder on GitHub.":j.error||"Invite failed (code "+r.status+")");
+ const ok=j.results.filter(x=>x.ok).length,bad=j.results.filter(x=>!x.ok);
+ toast(ok+" invited"+(bad.length?", "+bad.length+" failed: "+bad[0].error:""));await loadEmps();render()}
+const pendingIds=()=>S.emps.filter(e=>!e.user_id&&e.status==="active").map(e=>e.id);
+
+// ---------- Screens ----------
+function render(){const a=$("app");const s=S.screen;
+ const err=S.err?`<div class="err" role="alert">${esc(S.err)}</div>`:"";
+ if(s==="boot"){a.innerHTML=`<div class="center mute">Loading…</div>`;return}
+ if(s==="noconfig"){a.innerHTML=`<div class="center card"><div class="brand">ESwari HRMS</div><h1>Not connected yet</h1><p class="mute">Open <b>config.js</b> and paste your Supabase project URL and anon key, then redeploy.</p></div>`;return}
+ if(s==="login"){a.innerHTML=`<div class="center card"><div class="brand">ESwari HRMS</div><h1>Sign in</h1>
+  <label for="em">Work email</label><input id="em" type="email" autocomplete="username" value="${esc(S.em||"")}">
+  <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password">
+  <p><button class="btn" onclick="signIn()">Sign in</button> <button class="link" onclick="forgot()">Forgot password</button></p>${err}</div>`;
+  $("pw").addEventListener("keydown",e=>{if(e.key==="Enter")signIn()});return}
+ if(s==="setpw"){a.innerHTML=`<div class="center card"><div class="brand">ESwari HRMS</div><h1>Set your password</h1><p class="mute">Choose a password of at least 10 characters.</p>
+  <label for="p1">New password</label><input id="p1" type="password" autocomplete="new-password"><label for="p2">Repeat password</label><input id="p2" type="password" autocomplete="new-password">
+  <p><button class="btn" onclick="setPw()">Save password</button></p>${err}</div>`;return}
+ if(s==="mfa"){a.innerHTML=`<div class="center card"><div class="brand">ESwari HRMS</div><h1>Enter your code</h1><p class="mute">Open your authenticator app and type the 6-digit code.</p>
+  <input id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"><p><button class="btn" onclick="verify()">Verify</button> <button class="link" onclick="signOut()">Cancel</button></p>${err}</div>`;
+  $("code").addEventListener("keydown",e=>{if(e.key==="Enter")verify()});return}
+ if(s==="enroll"){a.innerHTML=`<div class="center card"><div class="brand">ESwari HRMS</div><h1>Set up your authenticator</h1><p class="mute">HR and Finance accounts need a second step. Scan this with Google Authenticator, Microsoft Authenticator or similar, then enter the code it shows.</p>
+  <p style="text-align:center"><img alt="QR code" width="190" height="190" src="${esc(S.enroll.totp.qr_code)}"></p><p class="mute">Can't scan? Enter this key: <b>${esc(S.enroll.totp.secret)}</b></p>
+  <input id="code" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code"><p><button class="btn" onclick="verify()">Confirm</button></p>${err}</div>`;return}
+ // app
+ const name=S.me?S.me.full_name:(S.user&&S.user.email),tabs=[["people","People"]];
+ if(isHR())tabs.push(["salary","Salary"],["attendance","Attendance"]);
+ if(isHR()||S.roles.includes("finance"))tabs.push(["payroll","Payroll"]);
+ if(S.me)tabs.push(["leave","My leave"]);
+ if(isHR()||S.roles.includes("manager"))tabs.push(["approvals","Leave approvals"]);
+ if(isHR())tabs.push(["leavesetup","Leave setup"]);
+ if(S.me)tabs.push(["tax","Tax declaration"],["slips","My payslips"]);
+ if(isHR())tabs.push(["import","Import from Excel"]);
+ const views={people:peopleView,import:importView,salary:salaryView,attendance:attView,leave:leaveView,approvals:apprView,tax:taxView,payroll:payrollView,slips:slipsView,leavesetup:setupView};
+ const body=(views[S.tab]||peopleView)();
+ a.innerHTML=`<header><div class="wrap"><span class="brand">ESwari HRMS</span><span>${esc(name)} ${S.roles.map(r=>`<span class="pill">${esc(r.replace("_"," "))}</span>`).join(" ")} <button class="btn alt" onclick="signOut()">Sign out</button></span></div></header>
+ <main class="wrap">${tabs.length>1?`<div class="seg">${tabs.map(t=>`<button class="${S.tab===t[0]?"on":""}" onclick="openTab('${t[0]}')">${t[1]}</button>`).join("")}</div>`:""}${body}</main>`}
+function peopleView(){
+ const q=S.q.toLowerCase(),list=S.emps.filter(e=>!q||(e.full_name+e.emp_code+e.work_email).toLowerCase().includes(q));
+ const title=isHR()?"People":S.roles.includes("manager")?"Me and my team":"My profile";const pend=pendingIds().length;
+ return`<h1>${title}</h1><div class="card">
+ ${isHR()?`<p><button class="btn" onclick="S.showAdd=!S.showAdd;S.err='';render()">Add employee</button> ${pend?`<button class="btn alt" onclick="invite(pendingIds())">Send login invites (${pend})</button>`:""}</p>`:""}
+ ${S.showAdd&&isHR()?addForm():""}
+ ${S.emps.length>8?`<input placeholder="Search name, code or email" value="${esc(S.q)}" id="sq" oninput="S.q=this.value;render();const n=$('sq');n.focus();n.setSelectionRange(n.value.length,n.value.length)" aria-label="Search" style="margin-bottom:10px">`:""}
+ <div class="tbl"><table><tr><th>Code</th><th>Name</th><th>Email</th><th>Designation</th><th>Joined</th><th>Login</th></tr>
+ ${list.map(e=>`<tr><td>${esc(e.emp_code)}</td><td>${esc(e.full_name)}</td><td>${esc(e.work_email)}</td><td>${esc(e.designation||"")}</td><td>${esc(e.joining_date)}</td>
+ <td>${e.user_id?`<span class="pill ok">Active</span>`:isHR()?`<button class="link" onclick="invite(['${e.id}'])">Invite</button>`:`<span class="pill">Pending</span>`}</td></tr>`).join("")||`<tr><td colspan="6" class="mute">No employees yet.</td></tr>`}</table></div></div>
+ ${!isHR()?`<p class="mute">Payslips arrive in the next step.</p>`:""}`}
+function addForm(){const f=(id,l,t)=>`<div><label for="a_${id}">${l}</label><input id="a_${id}" ${t?`type="${t}"`:""}></div>`;
+ return`<div class="card" style="background:var(--bg)"><h2>New employee</h2><div class="grid">${f("emp_code","Employee code")}${f("full_name","Full name")}${f("work_email","Work email","email")}${f("designation","Designation")}${f("department","Department")}${f("joining_date","Joining date","date")}${f("manager_code","Manager's code")}${f("pan","PAN")}${f("uan","UAN")}${f("esi_no","ESI number")}${f("bank_name","Bank name")}${f("bank_account","Account number")}${f("ifsc","IFSC")}</div>
+ <p><button class="btn" onclick="addOne()">Save employee</button></p>${S.err?`<div class="err" role="alert">${esc(S.err)}</div>`:""}</div>`}
+function empImportView(){const i=S.imp;let h=`<h1>Import employees from Excel</h1><div class="card"><p>1. Download the template and fill one row per employee. 2. Upload it here. You will see any mistakes by row before anything is saved.</p>
+ <p><button class="btn alt" onclick="template()">Download template</button></p><label for="fl">Excel file (.xlsx)</label><input id="fl" type="file" accept=".xlsx,.xls,.csv" onchange="readFile(this)"></div>`;
+ if(!i)return h;
+ if(i.empty)return h+`<div class="card err">That file has no rows. Fill in the template and try again.</div>`;
+ if(i.fail)return h+`<div class="card err">Could not read that file. Please upload the .xlsx template.</div>`;
+ h+=`<div class="card"><h2>${esc(i.name)}</h2><p><span class="pill ok">${i.good.length} rows ready</span> <span class="pill ${i.errors.length?"bad":""}">${new Set(i.errors.map(e=>e.row)).size} rows with problems</span> <span class="mute">of ${i.total}</span></p>
+ ${i.errors.length?`<div class="tbl"><table><tr><th>Excel row</th><th>Field</th><th>Problem</th></tr>${i.errors.map(e=>`<tr><td>${e.row}</td><td>${esc(e.field)}</td><td>${esc(e.msg)}</td></tr>`).join("")}</table></div><p class="mute">Fix these in Excel and upload again, or import only the ready rows now.</p>`:""}
+ <p><button class="btn" ${i.good.length&&!S.busy?"":"disabled"} onclick="doImport()">${S.busy?"Importing…":`Import ${i.good.length} ready rows`}</button></p></div>`;return h}
+
+// ---------- Step 3: salary, attendance, leave, tax ----------
+const inr=n=>"₹"+Math.round(+n||0).toLocaleString("en-IN");
+const today=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
+const fyNow=()=>{const d=new Date(),y=d.getMonth()>=3?d.getFullYear():d.getFullYear()-1;return y+"-"+String((y+1)%100).padStart(2,"0")};
+const prevMonth=()=>{const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-1);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")};
+const daysBetween=(f,t)=>Math.round((new Date(t)-new Date(f))/864e5)+1;
+const pill=(t,c)=>`<span class="pill ${c||""}">${esc(t)}</span>`;
+const stPill=s=>pill(s,s==="approved"?"ok":s==="rejected"?"bad":"");
+async function openTab(t){S.tab=t;S.err="";S.showAdd=false;
+ if(t==="salary")await loadSalary();else if(t==="attendance")await loadAtt();else if(t==="leave")await loadLeave();
+ else if(t==="approvals")await loadAppr();else if(t==="tax")await loadTax();else if(t==="payroll")await loadPayroll();else if(t==="slips")await loadSlips();else if(t==="leavesetup")await loadSetup();render()}
+
+// Salary structures
+async function loadSalary(){const{data,error}=await sb.from("salary_structures").select("*").order("effective_from",{ascending:false});if(error)toast(error.message);S.sal=data||[]}
+function curSal(id){const l=(S.sal||[]).filter(s=>s.employee_id===id);return l.find(s=>s.effective_from<=today())||l[l.length-1]}
+function salaryView(){const act=S.emps.filter(e=>e.status==="active");
+ return`<h1>Salary structures</h1><div class="card"><p class="mute">Every change is saved as a new revision with an effective date. Earlier revisions are kept.</p>
+ ${S.salEdit?salForm():""}<div class="tbl"><table><tr><th>Employee</th><th>Effective from</th><th>Basic</th><th>HRA</th><th>Allowances</th><th>Gross</th><th>PF / ESI / PT</th><th></th></tr>
+ ${act.map(e=>{const s=curSal(e.id);return`<tr><td>${esc(e.emp_code)} ${esc(e.full_name)}</td>${s?`<td>${esc(s.effective_from)}</td><td>${inr(s.basic)}</td><td>${inr(s.hra)}</td><td>${inr(s.allowances)}</td><td><b>${inr(+s.basic+ +s.hra+ +s.allowances)}</b></td><td>${s.pf_applicable?"PF ":""}${s.esi_applicable?"ESI ":""}${s.pt_applicable?"PT":""}</td>`:`<td colspan="6">${pill("Not set","bad")}</td>`}
+ <td><button class="link" onclick="S.salEdit='${e.id}';S.err='';render()">${s?"Revise":"Set"}</button>${s?` <button class="link" onclick="S.salHist=S.salHist==='${e.id}'?null:'${e.id}';render()">History</button>`:""}</td></tr>`}).join("")||`<tr><td colspan="8" class="mute">No active employees.</td></tr>`}</table></div>
+ ${S.salHist?`<h2 style="margin-top:14px">History</h2><div class="tbl"><table><tr><th>Effective from</th><th>Basic</th><th>HRA</th><th>Allowances</th></tr>${S.sal.filter(s=>s.employee_id===S.salHist).map(s=>`<tr><td>${esc(s.effective_from)}</td><td>${inr(s.basic)}</td><td>${inr(s.hra)}</td><td>${inr(s.allowances)}</td></tr>`).join("")}</table></div>`:""}</div>`}
+function salForm(){const e=S.emps.find(x=>x.id===S.salEdit),s=curSal(e.id)||{},ck=k=>s[k]===false?"":"checked";
+ return`<div class="card" style="background:var(--bg)"><h2>${esc(e.full_name)}: new revision</h2><div class="grid">
+ <div><label for="sf_date">Effective from</label><input id="sf_date" type="date" value="${today()}"></div>
+ <div><label for="sf_basic">Basic (monthly)</label><input id="sf_basic" type="number" min="0" value="${s.basic||""}"></div>
+ <div><label for="sf_hra">HRA</label><input id="sf_hra" type="number" min="0" value="${s.hra||0}"></div>
+ <div><label for="sf_al">Allowances</label><input id="sf_al" type="number" min="0" value="${s.allowances||0}"></div></div>
+ <p><label><input id="sf_pf" type="checkbox" style="width:auto" ${ck("pf_applicable")}> PF applies</label> <label><input id="sf_esi" type="checkbox" style="width:auto" ${ck("esi_applicable")}> ESI applies</label> <label><input id="sf_pt" type="checkbox" style="width:auto" ${ck("pt_applicable")}> Professional tax applies</label></p>
+ <p><button class="btn" onclick="saveSal()">Save revision</button> <button class="btn alt" onclick="S.salEdit=null;S.err='';render()">Cancel</button></p>${S.err?`<div class="err" role="alert">${esc(S.err)}</div>`:""}</div>`}
+async function saveSal(){const d=val("sf_date"),b=+val("sf_basic"),h=+val("sf_hra")||0,a=+val("sf_al")||0;
+ if(!d){S.err="Choose the date it takes effect.";return keep()}if(!(b>0)){S.err="Basic pay must be more than 0.";return keep()}if(h<0||a<0){S.err="Amounts can't be negative.";return keep()}
+ const{error}=await sb.from("salary_structures").insert({employee_id:S.salEdit,effective_from:d,basic:b,hra:h,allowances:a,pf_applicable:$("sf_pf").checked,esi_applicable:$("sf_esi").checked,pt_applicable:$("sf_pt").checked});
+ if(error){S.err=error.code==="23505"?"A revision already exists for that date. Pick another date.":error.message;return keep()}
+ S.salEdit=null;S.err="";await loadSalary();render();toast("Salary saved")}
+
+// Salary import
+const SAL_COLS=["emp_code","effective_from","basic","hra","allowances","pf","esi","pt"];
+function validateSalary(rows,emps,existing){
+ const idOf={};emps.forEach(e=>idOf[e.emp_code.toLowerCase()]=e.id);
+ const have=new Set(existing.map(s=>s.employee_id+"|"+s.effective_from)),seen=new Set(),errors=[],good=[];
+ const yn=v=>{const s=String(v==null?"":v).trim().toLowerCase();return s===""||["y","yes","true","1"].includes(s)?true:["n","no","false","0"].includes(s)?false:null};
+ rows.forEach((raw,i)=>{const n=i+2,bad=[],add=(f,m)=>bad.push({row:n,field:f,msg:m});
+  const code=String(raw.emp_code==null?"":raw.emp_code).trim().toLowerCase(),id=idOf[code];
+  if(!code)add("emp_code","Required");else if(!id)add("emp_code","Employee code not found");
+  const iso=toISO(raw.effective_from);if(!raw.effective_from)add("effective_from","Required");else if(!iso)add("effective_from","Use DD-MM-YYYY or YYYY-MM-DD");
+  const num=(f,req)=>{const s=String(raw[f]==null?"":raw[f]).replace(/,/g,"").trim();if(s===""){if(req)add(f,"Required");return 0}const v=Number(s);if(isNaN(v)||v<0){add(f,"Must be a number, 0 or more");return 0}return v};
+  const b=num("basic",true),h=num("hra"),a=num("allowances");if(b===0&&!bad.some(x=>x.field==="basic"))add("basic","Must be more than 0");
+  const fl={};["pf","esi","pt"].forEach(f=>{const v=yn(raw[f]);if(v===null)add(f,"Use Y or N");fl[f]=v!==false});
+  if(id&&iso){const k=id+"|"+iso;if(have.has(k))add("effective_from","A revision already exists for that date");else if(seen.has(k))add("effective_from","Repeated in this file");seen.add(k)}
+  if(bad.length)errors.push(...bad);else good.push({employee_id:id,effective_from:iso,basic:b,hra:h,allowances:a,pf_applicable:fl.pf,esi_applicable:fl.esi,pt_applicable:fl.pt})});
+ return{good,errors,total:rows.length}}
+function salTemplate(){const ws=XLSX.utils.aoa_to_sheet([SAL_COLS,["E001","01-04-2026",30000,12000,8000,"Y","Y","Y"]]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Salary");XLSX.writeFile(wb,"ESwari-salary-template.xlsx")}
+async function readSalFile(inp){const f=inp.files[0];if(!f)return;
+ try{if(!S.sal)await loadSalary();const wb=XLSX.read(await f.arrayBuffer(),{type:"array",cellDates:true});
+  const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+  if(!rows.length)S.simp={empty:true};else{S.simp=validateSalary(rows,S.emps,S.sal);S.simp.name=f.name}}catch(e){S.simp={fail:true}}render()}
+async function doSalImport(){S.busy=true;render();
+ const{error}=await sb.from("salary_structures").insert(S.simp.good);
+ if(error)toast("Import failed: "+error.message);else{toast(S.simp.good.length+" salary revisions imported");S.simp=null;await loadSalary()}
+ S.busy=false;render()}
+function salImportView(){const i=S.simp;let h=`<h1>Import salary structures</h1><div class="card"><p>Download the template, fill one row per salary revision (use Y or N for PF, ESI and PT), then upload. Mistakes are listed by Excel row before anything is saved.</p>
+ <p><button class="btn alt" onclick="salTemplate()">Download template</button></p><label for="sl">Excel file (.xlsx)</label><input id="sl" type="file" accept=".xlsx,.xls,.csv" onchange="readSalFile(this)"></div>`;
+ if(!i)return h;if(i.empty)return h+`<div class="card err">That file has no rows.</div>`;if(i.fail)return h+`<div class="card err">Could not read that file. Please upload the .xlsx template.</div>`;
+ return h+`<div class="card"><h2>${esc(i.name)}</h2><p>${pill(i.good.length+" rows ready","ok")} ${pill(new Set(i.errors.map(e=>e.row)).size+" rows with problems",i.errors.length?"bad":"")} <span class="mute">of ${i.total}</span></p>
+ ${i.errors.length?`<div class="tbl"><table><tr><th>Excel row</th><th>Field</th><th>Problem</th></tr>${i.errors.map(e=>`<tr><td>${e.row}</td><td>${esc(e.field)}</td><td>${esc(e.msg)}</td></tr>`).join("")}</table></div>`:""}
+ <p><button class="btn" ${i.good.length&&!S.busy?"":"disabled"} onclick="doSalImport()">${S.busy?"Importing…":`Import ${i.good.length} ready rows`}</button></p></div>`}
+function importView(){const k=S.impKind||"emp",b=(v,l)=>`<button class="${k===v?"on":""}" onclick="S.impKind='${v}';render()">${l}</button>`;
+ return`<div class="seg">${b("emp","Employees")}${b("sal","Salary structures")}${b("ob","Opening balances")}</div>`+(k==="sal"?salImportView():k==="ob"?obImportView():empImportView())}
+
+// Attendance (loss of pay) and one-time items
+async function loadAtt(){const m=S.am||(S.am=prevMonth()),d=m+"-01";
+ const[a,o,r]=await Promise.all([sb.from("attendance_months").select("*").eq("month",d),sb.from("one_time_items").select("*").eq("month",d).order("label"),sb.from("payroll_runs").select("status").eq("month",d).maybeSingle()]);
+ S.att=a.data||[];S.oti=o.data||[];S.frozen=!!(r.data&&r.data.status!=="draft");
+ await loadLeaveRef();const me=m+"-"+String(new Date(+m.slice(0,4),+m.slice(5),0).getDate()).padStart(2,"0");
+ const{data:u}=await sb.from("leave_requests").select("employee_id,from_date,to_date").eq("status","approved").eq("leave_type","unpaid").lte("from_date",me).gte("to_date",d);S.unp=u||[]}
+function attView(){const act=S.emps.filter(e=>e.status==="active"),days=new Date(+S.am.slice(0,4),+S.am.slice(5),0).getDate(),dis=S.frozen?"disabled":"";
+ const lop=id=>{const r=S.att.find(a=>a.employee_id===id);return r?r.lop_days:0};
+ return`<h1>Attendance and one-time items</h1><div class="card"><label for="am">Month</label><input id="am" type="month" value="${esc(S.am)}" style="max-width:220px" onchange="S.am=this.value;openTab('attendance')">
+ ${S.frozen?`<p class="err">Payroll for this month is approved. Inputs are frozen.</p>`:`<p class="mute">Enter loss-of-pay days (0 to ${days}). Leave 0 for full attendance. <button class="link" onclick="fillLop()">Fill from approved unpaid leave</button></p>`}
+ <div class="tbl"><table><tr><th>Employee</th><th>LOP days</th><th>One-time items</th></tr>
+ ${act.map(e=>{const it=S.oti.filter(x=>x.employee_id===e.id);return`<tr><td>${esc(e.emp_code)} ${esc(e.full_name)}</td><td><input id="lop_${e.id}" type="number" min="0" max="${days}" step="0.5" value="${lop(e.id)}" style="width:90px" ${dis}></td>
+ <td>${it.map(x=>`${esc(x.label)} ${inr(x.amount)} ${S.frozen?"":`<button class="link" onclick="delItem('${x.id}')">remove</button>`}`).join("; ")||`<span class="mute">None</span>`}</td></tr>`}).join("")}</table></div>
+ <p><button class="btn" ${dis} onclick="saveAtt()">Save LOP days</button></p>
+ ${S.frozen?"":`<h2 style="margin-top:14px">Add a bonus, arrears or other one-time item</h2><div class="grid"><div><label for="oi_e">Employee</label><select id="oi_e">${act.map(e=>`<option value="${e.id}">${esc(e.full_name)}</option>`).join("")}</select></div>
+ <div><label for="oi_l">Label</label><input id="oi_l" placeholder="e.g. Diwali bonus"></div><div><label for="oi_a">Amount (use minus for a deduction)</label><input id="oi_a" type="number"></div></div>
+ <p><button class="btn alt" onclick="addItem()">Add item</button></p>`}${S.err?`<div class="err" role="alert">${esc(S.err)}</div>`:""}</div>`}
+async function saveAtt(){const act=S.emps.filter(e=>e.status==="active"),days=new Date(+S.am.slice(0,4),+S.am.slice(5),0).getDate(),rows=[];
+ for(const e of act){const v=+val("lop_"+e.id)||0;if(v<0||v>days){S.err=e.full_name+": LOP days must be between 0 and "+days+".";return keep()}rows.push({employee_id:e.id,month:S.am+"-01",lop_days:v})}
+ const{error}=await sb.from("attendance_months").upsert(rows,{onConflict:"employee_id,month"});
+ if(error){S.err=error.message;return keep()}S.err="";await loadAtt();render();toast("Attendance saved")}
+async function addItem(){const l=val("oi_l"),a=Number(val("oi_a"));if(!l||!val("oi_a")||isNaN(a)||a===0){S.err="Enter a label and a non-zero amount.";return keep()}
+ const{error}=await sb.from("one_time_items").insert({employee_id:val("oi_e"),month:S.am+"-01",label:l,amount:a});
+ if(error){S.err=error.message;return keep()}S.err="";await loadAtt();render();toast("Item added")}
+async function delItem(id){const{error}=await sb.from("one_time_items").delete().eq("id",id);if(error)toast(error.message);await loadAtt();render()}
+
+// Leave
+async function applyLeave(){const f=val("lv_from"),t=val("lv_to");if(!f||!t){S.err="Pick both dates.";return keep()}if(t<f){S.err="The end date can't be before the start date.";return keep()}
+ const{error}=await sb.from("leave_requests").insert({employee_id:S.me.id,from_date:f,to_date:t,leave_type:val("lv_type"),reason:val("lv_reason")||null});
+ if(error){S.err=error.message;return keep()}S.err="";await loadLeave();render();toast("Leave request sent")}
+async function loadAppr(){const{data,error}=await sb.from("leave_requests").select("*, employees(full_name,emp_code)").order("created_at",{ascending:false});if(error)toast(error.message);S.ap=data||[]}
+function apprView(){const mine=l=>S.me&&l.employee_id===S.me.id,list=S.ap.slice().sort((a,b)=>(a.status==="pending"?0:1)-(b.status==="pending"?0:1));
+ return`<h1>Leave approvals</h1><div class="card"><div class="tbl"><table><tr><th>Employee</th><th>From</th><th>To</th><th>Days</th><th>Type</th><th>Reason</th><th>Status</th></tr>
+ ${list.map(l=>`<tr><td>${esc(l.employees?l.employees.full_name:"")}</td><td>${esc(l.from_date)}</td><td>${esc(l.to_date)}</td><td>${num(l.days)}</td><td>${esc(l.leave_type)}</td><td>${esc(l.reason||"")}</td>
+ <td>${l.status==="pending"&&!mine(l)?`<button class="btn" onclick="decide('${l.id}','approved')">Approve</button> <button class="btn alt" onclick="decide('${l.id}','rejected')">Reject</button>`:stPill(l.status)+(mine(l)&&l.status==="pending"?` <span class="mute">needs another approver</span>`:"")}</td></tr>`).join("")||`<tr><td colspan="7" class="mute">No leave requests.</td></tr>`}</table></div></div>`}
+async function decide(id,st){const{data,error}=await sb.from("leave_requests").update({status:st,decided_by:S.user.id,decided_at:new Date().toISOString()}).eq("id",id).select();
+ if(error||!data||!data.length){toast(error?error.message:"You can't decide this request.");return}await loadAppr();render();toast("Leave "+st)}
+
+// Tax declaration
+async function loadTax(){const{data}=await sb.from("tax_declarations").select("*").eq("employee_id",S.me.id).eq("fy",fyNow()).maybeSingle();S.tx=data}
+function taxView(){const t=S.tx||{regime:"new",declared:{}},d=t.declared||{},old=S.txr?S.txr==="old":t.regime==="old";
+ const f=(id,l)=>`<div><label for="tx_${id}">${l}</label><input id="tx_${id}" type="number" min="0" value="${+d[id]||0}"></div>`;
+ return`<h1>Tax declaration FY ${esc(fyNow())}</h1><div class="card"><p class="mute">Choose your tax regime. This is used to work out the tax deducted from your salary (TDS). You can update it until HR closes declarations.</p>
+ <label for="tx_regime">Tax regime</label><select id="tx_regime" onchange="S.txr=this.value;render()"><option value="new" ${old?"":"selected"}>New regime</option><option value="old" ${old?"selected":""}>Old regime</option></select>
+ ${old?`<div class="grid">${f("sec80c","Section 80C investments (yearly)")}${f("sec80d","Section 80D health insurance (yearly)")}${f("home_loan_interest","Home loan interest (yearly)")}${f("monthly_rent","Monthly rent paid")}</div>`:`<p class="mute">The new regime needs no investment details.</p>`}
+ <p><button class="btn" onclick="saveTax()">Save declaration</button> ${S.tx?pill("Saved","ok"):""}</p>${S.err?`<div class="err" role="alert">${esc(S.err)}</div>`:""}</div>`}
+async function saveTax(){const regime=val("tx_regime"),declared={};
+ if(regime==="old")for(const k of["sec80c","sec80d","home_loan_interest","monthly_rent"]){const v=+val("tx_"+k)||0;if(v<0){S.err="Amounts can't be negative.";return keep()}declared[k]=v}
+ const{error}=await sb.from("tax_declarations").upsert({employee_id:S.me.id,fy:fyNow(),regime,declared},{onConflict:"employee_id,fy"});
+ if(error){S.err=error.message;return keep()}S.err="";S.txr=null;await loadTax();render();toast("Declaration saved")}
+
+
+// ---------- Step 4: payroll run, payslips, opening balances ----------
+const MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
+const monthLabel=m=>MONTHS[+m.slice(5,7)-1]+" "+m.slice(0,4);
+const prevOf=m=>{let y=+m.slice(0,4),n=+m.slice(5,7)-1;if(n===0){y--;n=12}return y+"-"+String(n).padStart(2,"0")};
+const earnedOf=i=>+i.gross-+i.lop_amount+ +i.bonus, dedOf=i=>+i.pf+ +i.esi+ +i.pt+ +i.tds;
+async function callFn(name,body){const{data:{session}}=await sb.auth.getSession();
+ const r=await fetch("/.netlify/functions/"+name,{method:"POST",headers:{Authorization:"Bearer "+session.access_token,"Content-Type":"application/json"},body:JSON.stringify(body)});
+ let j={};try{j=await r.json()}catch(e){}return{ok:r.ok,status:r.status,j}}
+async function loadPayroll(){const m=S.pm||(S.pm=prevMonth());
+ const{data:run}=await sb.from("payroll_runs").select("*").eq("month",m+"-01").maybeSingle();
+ S.run=run;S.items=[];S.pslips=[];S.prevNet={};S.okc=false;
+ if(run){const[a,b]=await Promise.all([sb.from("payroll_items").select("*").eq("run_id",run.id),sb.from("payslips").select("*").eq("run_id",run.id)]);S.items=a.data||[];S.pslips=b.data||[]}
+ const{data:pr}=await sb.from("payroll_runs").select("id").eq("month",prevOf(m)+"-01").maybeSingle();
+ if(pr){const{data}=await sb.from("payroll_items").select("employee_id,net").eq("run_id",pr.id);(data||[]).forEach(x=>S.prevNet[x.employee_id]=+x.net)}}
+function fnErr(r,fallback){if(r.j&&r.j.error)return r.j.error;
+ if(r.status===404)return "The server function was not found (404). The netlify folder is probably missing on GitHub, or Netlify has not finished deploying.";
+ if(r.status>=500)return "The server function crashed (code "+r.status+"). Check the Netlify function logs and the environment variables.";
+ return fallback+" (code "+r.status+")"}
+async function calcPayroll(){S.busy=true;S.err="";render();const r=await callFn("payroll-run",{month:S.pm});S.busy=false;
+ if(!r.ok)S.err=fnErr(r,"Calculation failed");else{const x=r.j.excluded||[];toast("Calculated for "+r.j.included+" employees"+(x.length?", "+x.length+" left out":""))}
+ await loadPayroll();render()}
+async function setRunStatus(st){S.err="";const{data,error}=await sb.from("payroll_runs").update({status:st}).eq("id",S.run.id).select();
+ if(error||!data||!data.length){S.err=error?error.message:"You are not allowed to do this.";return render()}
+ toast("Payroll "+st);await loadPayroll();render()}
+async function releasePayroll(){S.busy=true;S.err="";S.relFailed=[];render();let n=0,failed=[];
+ while(n++<30){const r=await callFn("release",{run_id:S.run.id});if(!r.ok){S.err=fnErr(r,"Release failed");break}
+  failed=failed.concat(r.j.failed||[]);S.mailOff=r.j.emailConfigured===false;if(r.j.done)break}
+ S.busy=false;S.relFailed=failed;await loadPayroll();render();if(!S.err)toast("Payslips released")}
+async function dlSlip(path,name){const{data,error}=await sb.storage.from("payslips").createSignedUrl(path,120,{download:name+".pdf"});
+ if(error||!data)return toast(error?error.message:"File not available");const a=document.createElement("a");a.href=data.signedUrl;document.body.appendChild(a);a.click();a.remove()}
+function payrollView(){const m=S.pm,run=S.run,st=run?run.status:"none",items=S.items,hr=isHR();
+ const nm=id=>{const e=S.emps.find(x=>x.id===id);return e?e.full_name:"?"};
+ const stage={none:0,draft:items.length?1:0,approved:2,locked:3,released:5}[st],labels=["Calculate","Review","Approve","Lock","Release"];
+ const tot=items.reduce((a,i)=>({e:a.e+earnedOf(i),d:a.d+dedOf(i),n:a.n+ +i.net}),{e:0,d:0,n:0});
+ const left=run?S.emps.filter(e=>e.status==="active"&&e.joining_date<=m+"-31"&&!items.some(i=>i.employee_id===e.id)):[];
+ const warns=[];items.forEach(i=>(i.notes||[]).forEach(t=>warns.push(nm(i.employee_id)+": "+t)));
+ let h=`<h1>Payroll</h1><div class="card"><label for="pmon">Month</label><input id="pmon" type="month" value="${esc(m)}" style="max-width:220px" onchange="S.pm=this.value;openTab('payroll')">
+ <div class="steps" style="margin-top:12px">${labels.map((l,i)=>`<div class="${i<stage?"done":i===stage?"cur":""}">${i+1}. ${l}</div>`).join("")}</div>
+ ${S.err?`<div class="err" role="alert">${esc(S.err)}</div>`:""}`;
+ if(st==="none"||st==="draft")h+=hr?`<p><button class="btn" ${S.busy?"disabled":""} onclick="calcPayroll()">${S.busy?"Calculating…":st==="draft"?"Recalculate payroll":"Calculate payroll for "+esc(monthLabel(m))}</button></p><p class="mute">Recalculate after you change salary, attendance or one-time items.</p>`:`<p class="mute">Waiting for HR to calculate this month.</p>`;
+ if(left.length)h+=`<p class="err">Left out of this run: ${left.map(e=>esc(e.full_name)).join(", ")} (no salary structure). Set their salary, then recalculate.</p>`;
+ if(items.length){h+=`<div class="tbl"><table><tr><th>Employee</th><th>Days paid</th><th class="n">Earned</th><th class="n">PF</th><th class="n">ESI</th><th class="n">PT</th><th class="n">TDS</th><th class="n">Net pay</th><th>Vs last month</th></tr>
+ ${items.map(i=>{const pv=S.prevNet[i.employee_id],pc=pv?(+i.net-pv)/pv*100:null;return`<tr><td>${esc(nm(i.employee_id))}${(i.notes||[]).length?` <span title="${esc(i.notes.join(" "))}">⚠</span>`:""}</td><td>${+i.paid_days}/${i.days_in_month}</td><td class="n">${inr(earnedOf(i))}</td><td class="n">${inr(i.pf)}</td><td class="n">${inr(i.esi)}</td><td class="n">${inr(i.pt)}</td><td class="n">${inr(i.tds)}</td><td class="n"><b>${inr(i.net)}</b></td>
+ <td>${pc===null?pill("New"):Math.abs(pc)>10?pill((pc>0?"+":"")+pc.toFixed(0)+"% check","bad"):pill(pc.toFixed(0)+"%","ok")}</td></tr>`}).join("")}
+ <tr><td><b>Total</b></td><td></td><td class="n"><b>${inr(tot.e)}</b></td><td colspan="4" class="n"><b>${inr(tot.d)} deductions</b></td><td class="n"><b>${inr(tot.n)}</b></td><td></td></tr></table></div>`;
+  if(warns.length)h+=`<details open style="margin-top:10px"><summary>Things to check (${warns.length})</summary><ul>${warns.map(w=>`<li class="mute">${esc(w)}</li>`).join("")}</ul></details>`}
+ if(st==="draft"&&items.length)h+=`<p style="margin-top:12px"><label style="font-weight:400"><input type="checkbox" style="width:auto" ${S.okc?"checked":""} onchange="S.okc=this.checked;render()"> I have reviewed the numbers and the things to check</label></p>
+  <p><button class="btn" ${S.okc?"":"disabled"} onclick="setRunStatus('approved')">Approve payroll</button> <span class="mute">A different person from the one who calculated must approve.</span></p>`;
+ if(st==="approved")h+=`<p><span class="pill ok">Approved</span> Inputs for this month are now frozen.</p><p><button class="btn" onclick="setRunStatus('locked')">Lock payroll</button></p>`;
+ if(st==="locked")h+=hr?`<p><span class="pill ok">Locked</span> Release creates a password-protected PDF for each employee (password is their PAN) and emails it.</p><p><button class="btn" ${S.busy?"disabled":""} onclick="releasePayroll()">${S.busy?"Releasing…":"Release payslips"}</button></p>`:`<p><span class="pill ok">Locked</span> Waiting for HR to release payslips.</p>`;
+ if(st==="released"){h+=`<p><span class="pill ok">Released</span> ${S.mailOff?`<span class="err">Email is not set up, so payslips were not emailed. Employees can download them in the portal.</span>`:""}</p>
+  <div class="tbl"><table><tr><th>Employee</th><th>Email</th><th>Payslip</th></tr>${S.pslips.map(p=>`<tr><td>${esc(nm(p.employee_id))}</td><td>${p.emailed_at?pill("Sent","ok"):p.email_error?pill("Failed","bad"):pill("Not emailed")}</td><td><button class="link" onclick="dlSlip('${esc(p.storage_path)}','${esc(nm(p.employee_id)).replace(/ /g,"-")}-${esc(m)}')">Download</button></td></tr>`).join("")}</table></div>`;
+  if((S.relFailed||[]).length)h+=`<p class="err">${S.relFailed.map(f=>esc(f.name+": "+f.error)).join("; ")}</p>`}
+ return h+"</div>"}
+
+// Employee payslips
+async function loadSlips(){const[a,b]=await Promise.all([sb.from("payslips").select("*, payroll_runs(month)").eq("employee_id",S.me.id),sb.from("payroll_items").select("*").eq("employee_id",S.me.id)]);
+ const it=b.data||[];S.mySlips=(a.data||[]).map(s=>({...s,item:it.find(i=>i.run_id===s.run_id)})).filter(s=>s.item&&s.payroll_runs).sort((x,y)=>y.payroll_runs.month.localeCompare(x.payroll_runs.month))}
+function slipsView(){return`<h1>My payslips</h1><div class="card"><p class="mute">Each PDF is protected. The password is your PAN in capital letters.</p><div class="tbl"><table><tr><th>Month</th><th class="n">Earned</th><th class="n">Deductions</th><th class="n">Net pay</th><th></th></tr>
+ ${S.mySlips.map(s=>`<tr><td>${esc(monthLabel(s.payroll_runs.month))}</td><td class="n">${inr(earnedOf(s.item))}</td><td class="n">${inr(dedOf(s.item))}</td><td class="n"><b>${inr(s.item.net)}</b></td><td><button class="btn alt" onclick="dlSlip('${esc(s.storage_path)}','Payslip-${esc(s.payroll_runs.month.slice(0,7))}')">Download PDF</button></td></tr>`).join("")||`<tr><td colspan="5" class="mute">No payslips yet.</td></tr>`}</table></div></div>`}
+
+// Opening balances (year-to-date figures when going live mid-year)
+const OB_COLS=["emp_code","months_paid","gross_ytd","pf_ytd","pt_ytd","tds_ytd"];
+function validateOpening(rows,emps){const idOf={};emps.forEach(e=>idOf[e.emp_code.toLowerCase()]=e.id);const seen=new Set(),errors=[],good=[];
+ rows.forEach((raw,i)=>{const n=i+2,bad=[],add=(f,m)=>bad.push({row:n,field:f,msg:m});
+  const code=String(raw.emp_code==null?"":raw.emp_code).trim().toLowerCase(),id=idOf[code];
+  if(!code)add("emp_code","Required");else if(!id)add("emp_code","Employee code not found");else if(seen.has(code))add("emp_code","Repeated in this file");seen.add(code);
+  const num=f=>{const s=String(raw[f]==null?"":raw[f]).replace(/,/g,"").trim();if(s==="")return 0;const v=Number(s);if(isNaN(v)||v<0){add(f,"Must be a number, 0 or more");return 0}return v};
+  const mp=num("months_paid");if(!bad.some(b=>b.field==="months_paid")&&(!Number.isInteger(mp)||mp>11))add("months_paid","Whole number from 0 to 11");
+  const g=num("gross_ytd"),pf=num("pf_ytd"),pt=num("pt_ytd"),td=num("tds_ytd");
+  if(bad.length)errors.push(...bad);else good.push({employee_id:id,fy:fyNow(),months_paid:mp,gross_ytd:g,pf_ytd:pf,pt_ytd:pt,tds_ytd:td})});
+ return{good,errors,total:rows.length}}
+function obTemplate(){const ws=XLSX.utils.aoa_to_sheet([OB_COLS,["E001",6,600000,21600,1250,20000]]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Opening balances");XLSX.writeFile(wb,"ESwari-opening-balances-template.xlsx")}
+async function readObFile(inp){const f=inp.files[0];if(!f)return;
+ try{const wb=XLSX.read(await f.arrayBuffer(),{type:"array"});const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+  if(!rows.length)S.oimp={empty:true};else{S.oimp=validateOpening(rows,S.emps);S.oimp.name=f.name}}catch(e){S.oimp={fail:true}}render()}
+async function doObImport(){S.busy=true;render();const{error}=await sb.from("opening_balances").upsert(S.oimp.good,{onConflict:"employee_id,fy"});
+ if(error)toast("Import failed: "+error.message);else{toast(S.oimp.good.length+" opening balances saved");S.oimp=null}S.busy=false;render()}
+function obImportView(){const i=S.oimp;let h=`<h1>Import opening balances</h1><div class="card"><p>Use this if you start using ESwari part-way through the financial year (${esc(fyNow())}). For each employee, enter what was already paid <b>before</b> the first month you run here: months paid, gross, PF, professional tax and TDS so far. This keeps tax deduction correct.</p>
+ <p><button class="btn alt" onclick="obTemplate()">Download template</button></p><label for="ob">Excel file (.xlsx)</label><input id="ob" type="file" accept=".xlsx,.xls,.csv" onchange="readObFile(this)"></div>`;
+ if(!i)return h;if(i.empty)return h+`<div class="card err">That file has no rows.</div>`;if(i.fail)return h+`<div class="card err">Could not read that file. Please upload the .xlsx template.</div>`;
+ return h+`<div class="card"><h2>${esc(i.name)}</h2><p>${pill(i.good.length+" rows ready","ok")} ${pill(new Set(i.errors.map(e=>e.row)).size+" rows with problems",i.errors.length?"bad":"")} <span class="mute">of ${i.total}</span></p>
+ ${i.errors.length?`<div class="tbl"><table><tr><th>Excel row</th><th>Field</th><th>Problem</th></tr>${i.errors.map(e=>`<tr><td>${e.row}</td><td>${esc(e.field)}</td><td>${esc(e.msg)}</td></tr>`).join("")}</table></div>`:""}
+ <p><button class="btn" ${i.good.length&&!S.busy?"":"disabled"} onclick="doObImport()">${S.busy?"Saving…":`Save ${i.good.length} ready rows`}</button></p></div>`}
+
+
+// ---------- Step 5: leave balances, holiday calendar, leave setup ----------
+S.hol=[];S.lset={year_start_month:1,weekly_off:[0]};S.pol=[];S.bal=[];S.hy=new Date().getFullYear();
+const num=n=>Math.round(+n*10)/10, cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
+const DAYN=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+async function loadLeaveRef(){const[h,s,p]=await Promise.all([sb.from("holidays").select("*").order("holiday_date"),sb.from("leave_settings").select("*").maybeSingle(),sb.from("leave_policies").select("*").order("leave_type")]);
+ S.hol=h.data||[];if(s.data)S.lset=s.data;S.pol=p.data||[]}
+function workDays(f,t){let n=0;const off=S.lset.weekly_off||[0],hs=new Set(S.hol.filter(h=>!h.optional).map(h=>h.holiday_date));
+ for(let d=new Date(f+"T00:00:00Z");d<=new Date(t+"T00:00:00Z");d=new Date(d.getTime()+864e5)){if(!off.includes(d.getUTCDay())&&!hs.has(d.toISOString().slice(0,10)))n++}return n}
+async function loadLeave(){await loadLeaveRef();
+ const[r,b]=await Promise.all([sb.from("leave_requests").select("*").eq("employee_id",S.me.id).order("from_date",{ascending:false}),sb.rpc("leave_balances",{emp:S.me.id})]);
+ S.lv=r.data||[];S.bal=b.data||[];if(b.error)toast(b.error.message)}
+function leaveView(){const up=S.hol.filter(h=>h.holiday_date>=today()).slice(0,8);
+ return`<h1>My leave</h1><div class="grid" style="margin-bottom:14px">${S.bal.map(b=>`<div class="card"><b style="font-size:1.5rem;display:block">${b.counts?num(b.available):"No limit"}</b><span class="mute">${esc(cap(b.leave_type))}${b.counts?` available<br>${num(b.used)} used, ${num(b.pending)} pending`:`<br>${num(b.used)} days taken`}</span></div>`).join("")}</div>
+ <div class="card"><h2>Apply for leave</h2><div class="grid">
+ <div><label for="lv_type">Type</label><select id="lv_type" onchange="leavePreview()">${S.pol.map(p=>`<option value="${esc(p.leave_type)}">${esc(cap(p.leave_type))}</option>`).join("")}</select></div>
+ <div><label for="lv_from">From</label><input id="lv_from" type="date" onchange="leavePreview()"></div><div><label for="lv_to">To</label><input id="lv_to" type="date" onchange="leavePreview()"></div></div>
+ <p id="lv_prev" class="mute" aria-live="polite"></p><label for="lv_reason">Reason (optional)</label><input id="lv_reason"><p><button class="btn" onclick="applyLeave()">Send for approval</button></p>${S.err?`<div class="err" role="alert">${esc(S.err)}</div>`:""}</div>
+ <div class="card"><h2>My requests</h2><div class="tbl"><table><tr><th>From</th><th>To</th><th>Days</th><th>Type</th><th>Status</th><th></th></tr>
+ ${S.lv.map(l=>`<tr><td>${esc(l.from_date)}</td><td>${esc(l.to_date)}</td><td>${num(l.days)}</td><td>${esc(l.leave_type)}</td><td>${stPill(l.status)}</td><td>${l.status==="pending"?`<button class="link" onclick="cancelLeave('${l.id}')">Cancel</button>`:""}</td></tr>`).join("")||`<tr><td colspan="6" class="mute">No requests yet.</td></tr>`}</table></div>
+ <p class="mute">Only working days are counted. Weekly offs (${(S.lset.weekly_off||[]).map(d=>DAYN[d]).join(", ")||"none"}) and company holidays are skipped.</p></div>
+ <div class="card"><h2>Upcoming holidays</h2>${up.length?`<div class="tbl"><table>${up.map(h=>`<tr><td>${esc(h.holiday_date)}</td><td>${DAYN[new Date(h.holiday_date+"T00:00:00Z").getUTCDay()]}</td><td>${esc(h.name)}${h.optional?" "+pill("Optional"):""}</td></tr>`).join("")}</table></div>`:`<p class="mute">No holidays added yet.</p>`}</div>`}
+function leavePreview(){const f=val("lv_from"),t=val("lv_to"),ty=val("lv_type"),el=$("lv_prev");if(!el)return;if(!f||!t||t<f){el.textContent="";return}
+ const n=workDays(f,t),b=S.bal.find(x=>x.leave_type===ty);
+ el.textContent=n+" working day"+(n===1?"":"s")+(b&&b.counts?". You have "+num(b.available)+" available."+(n>b.available?" This is more than your balance.":""):"")}
+async function cancelLeave(id){const{data,error}=await sb.from("leave_requests").update({status:"cancelled"}).eq("id",id).select();
+ if(error||!data||!data.length){toast(error?error.message:"Could not cancel.");return}await loadLeave();render();toast("Request cancelled")}
+
+// Leave setup (HR): weekly offs, quotas, holidays, balances and adjustments
+async function loadSetup(){await loadLeaveRef();
+ const[b,a]=await Promise.all([sb.rpc("leave_balances_all"),sb.from("leave_adjustments").select("*, employees(full_name)").order("created_at",{ascending:false}).limit(15)]);
+ S.balAll=b.data||[];S.adjs=a.data||[];if(b.error)toast(b.error.message)}
+const curLeaveYear=()=>{const d=new Date(),ym=S.lset.year_start_month||1;return d.getMonth()+1>=ym?d.getFullYear():d.getFullYear()-1};
+function setupView(){const counted=S.pol.filter(p=>p.counts_against_balance),act=S.emps.filter(e=>e.status==="active"),hy=String(S.hy),hs=S.hol.filter(h=>h.holiday_date.startsWith(hy));
+ const err=S.err?`<div class="err" role="alert">${esc(S.err)}</div>`:"";
+ return`<h1>Leave setup</h1>${err}
+ <div class="card"><h2>Leave year and weekly offs</h2><div class="grid"><div><label for="ysm">Leave year starts in</label><select id="ysm">${MONTHS.map((m,i)=>`<option value="${i+1}" ${S.lset.year_start_month===i+1?"selected":""}>${m}</option>`).join("")}</select></div></div>
+ <p>${DAYN.map((d,i)=>`<label style="display:inline-block;margin-right:14px;font-weight:400"><input id="wo_${i}" type="checkbox" style="width:auto" ${(S.lset.weekly_off||[]).includes(i)?"checked":""}> ${d} off</label>`).join("")}</p>
+ <p><button class="btn" onclick="saveSettings()">Save</button></p></div>
+ <div class="card"><h2>Yearly quotas</h2><p class="mute">Quotas are for a full year. People who join part-way get a prorated share. Carry forward is capped at the days you set. The starting values are samples, so set your own.</p>
+ <div class="tbl"><table><tr><th>Leave type</th><th>Days per year</th><th>Max carry forward</th></tr>
+ ${S.pol.map(p=>`<tr><td>${esc(cap(p.leave_type))}${p.counts_against_balance?"":" "+pill("No limit")}</td><td>${p.counts_against_balance?`<input id="pa_${esc(p.leave_type)}" type="number" min="0" step="0.5" value="${+p.annual_days}" style="width:90px">`:"-"}</td><td>${p.counts_against_balance?`<input id="pc_${esc(p.leave_type)}" type="number" min="0" step="0.5" value="${+p.carry_forward_max}" style="width:90px">`:"-"}</td></tr>`).join("")}</table></div>
+ <p><button class="btn" onclick="savePolicies()">Save quotas</button></p>
+ <div class="grid"><div><label for="np_name">New leave type</label><input id="np_name" placeholder="e.g. maternity"></div><div><label for="np_days">Days per year</label><input id="np_days" type="number" min="0" step="0.5" value="0"></div></div>
+ <p><label style="font-weight:400"><input id="np_counts" type="checkbox" style="width:auto" checked> Limited by a balance</label> <button class="btn alt" onclick="addPolicy()">Add leave type</button></p></div>
+ <div class="card"><h2>Holiday calendar</h2><label for="hy">Year</label><input id="hy" type="number" value="${esc(hy)}" style="max-width:120px" onchange="S.hy=+this.value||S.hy;render()">
+ <div class="tbl"><table>${hs.map(h=>`<tr><td>${esc(h.holiday_date)}</td><td>${DAYN[new Date(h.holiday_date+"T00:00:00Z").getUTCDay()]}</td><td>${esc(h.name)}${h.optional?" "+pill("Optional"):""}</td><td><button class="link" onclick="delHoliday('${h.id}')">Remove</button></td></tr>`).join("")||`<tr><td class="mute">No holidays for ${esc(hy)}.</td></tr>`}</table></div>
+ <div class="grid"><div><label for="hd_date">Date</label><input id="hd_date" type="date"></div><div><label for="hd_name">Holiday name</label><input id="hd_name"></div></div>
+ <p><label style="font-weight:400"><input id="hd_opt" type="checkbox" style="width:auto"> Optional (not a day off for everyone)</label> <button class="btn alt" onclick="addHoliday()">Add holiday</button></p></div>
+ <div class="card"><h2>Balances today</h2><div class="tbl"><table><tr><th>Employee</th>${counted.map(p=>`<th class="n">${esc(cap(p.leave_type))}</th>`).join("")}</tr>
+ ${act.map(e=>`<tr><td>${esc(e.emp_code)} ${esc(e.full_name)}</td>${counted.map(p=>{const r=(S.balAll||[]).find(x=>x.employee_id===e.id&&x.leave_type===p.leave_type);return`<td class="n">${r?num(r.available):"-"}</td>`}).join("")}</tr>`).join("")}</table></div>
+ <h3 style="margin-top:14px">Add or remove days (opening balance, correction)</h3><div class="grid"><div><label for="aj_e">Employee</label><select id="aj_e">${act.map(e=>`<option value="${e.id}">${esc(e.full_name)}</option>`).join("")}</select></div>
+ <div><label for="aj_t">Leave type</label><select id="aj_t">${counted.map(p=>`<option value="${esc(p.leave_type)}">${esc(cap(p.leave_type))}</option>`).join("")}</select></div>
+ <div><label for="aj_d">Days (minus to remove)</label><input id="aj_d" type="number" step="0.5"></div><div><label for="aj_n">Note</label><input id="aj_n" placeholder="e.g. balance carried from old system"></div></div>
+ <p><button class="btn alt" onclick="addAdj()">Add adjustment</button> <span class="mute">Applies to the current leave year.</span></p>
+ ${S.adjs&&S.adjs.length?`<div class="tbl"><table><tr><th>Employee</th><th>Type</th><th class="n">Days</th><th>Note</th></tr>${S.adjs.map(a=>`<tr><td>${esc(a.employees?a.employees.full_name:"")}</td><td>${esc(a.leave_type)}</td><td class="n">${num(a.days)}</td><td>${esc(a.note||"")}</td></tr>`).join("")}</table></div>`:""}</div>`}
+async function saveSettings(){const off=[0,1,2,3,4,5,6].filter(d=>$("wo_"+d).checked);
+ const{error}=await sb.from("leave_settings").update({year_start_month:+val("ysm"),weekly_off:off}).eq("id",true);
+ if(error){S.err=error.message;return keep()}S.err="";await loadSetup();render();toast("Settings saved")}
+async function savePolicies(){for(const p of S.pol){if(!p.counts_against_balance)continue;const a=+val("pa_"+p.leave_type)||0,c=+val("pc_"+p.leave_type)||0;
+  if(a<0||c<0){S.err="Days can't be negative.";return keep()}
+  const{error}=await sb.from("leave_policies").update({annual_days:a,carry_forward_max:c}).eq("leave_type",p.leave_type);if(error){S.err=error.message;return keep()}}
+ S.err="";await loadSetup();render();toast("Quotas saved")}
+async function addPolicy(){const slug=val("np_name").toLowerCase().replace(/\s+/g,"_"),d=+val("np_days")||0;
+ if(!/^[a-z_]{2,20}$/.test(slug)){S.err="Use 2 to 20 letters for the leave type name.";return keep()}
+ const{error}=await sb.from("leave_policies").insert({leave_type:slug,annual_days:d,counts_against_balance:$("np_counts").checked});
+ if(error){S.err=error.code==="23505"?"That leave type already exists.":error.message;return keep()}S.err="";await loadSetup();render();toast("Leave type added")}
+async function addHoliday(){const d=val("hd_date"),n=val("hd_name");if(!d||!n){S.err="Enter the date and the holiday name.";return keep()}
+ const{error}=await sb.from("holidays").insert({holiday_date:d,name:n,optional:$("hd_opt").checked});
+ if(error){S.err=error.code==="23505"?"A holiday already exists on that date.":error.message;return keep()}S.err="";S.hy=+d.slice(0,4);await loadSetup();render();toast("Holiday added")}
+async function delHoliday(id){const{error}=await sb.from("holidays").delete().eq("id",id);if(error)toast(error.message);await loadSetup();render()}
+async function addAdj(){const d=Number(val("aj_d"));if(!val("aj_d")||isNaN(d)||d===0){S.err="Enter the number of days (not zero).";return keep()}
+ const{error}=await sb.from("leave_adjustments").insert({employee_id:val("aj_e"),leave_type:val("aj_t"),leave_year:curLeaveYear(),days:d,note:val("aj_n")||null});
+ if(error){S.err=error.message;return keep()}S.err="";await loadSetup();render();toast("Adjustment saved")}
+
+// Attendance helper: fill LOP from approved unpaid leave
+function unpaidFor(id){const m=S.am,ms=m+"-01",me=m+"-"+String(new Date(+m.slice(0,4),+m.slice(5),0).getDate()).padStart(2,"0");
+ return (S.unp||[]).filter(u=>u.employee_id===id).reduce((s,u)=>s+workDays(u.from_date>ms?u.from_date:ms,u.to_date<me?u.to_date:me),0)}
+function fillLop(){let n=0;S.emps.filter(e=>e.status==="active").forEach(e=>{const el=$("lop_"+e.id),v=unpaidFor(e.id);if(el&&v>0){el.value=v;n++}});
+ toast(n?"Filled "+n+" employee(s) from approved unpaid leave. Review, then Save.":"No approved unpaid leave this month.")}
+
+
+boot();
+</script></body></html>
