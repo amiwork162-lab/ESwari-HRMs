@@ -103,7 +103,7 @@ async function afterAuth(){
  const{data:f}=await sb.auth.mfa.listFactors();
  const factor=((f&&f.totp)||[]).find(x=>x.status==="verified");
  if(factor&&a.currentLevel!=="aal2"){S.factor=factor.id;S.screen="mfa";return render()}
- if(priv&&!factor){
+ if(priv&&!factor&&C.requireMfa!==false){
   for(const x of (f&&f.all)||[])if(x.status!=="verified")await sb.auth.mfa.unenroll({factorId:x.id});
   const{data,error}=await sb.auth.mfa.enroll({factorType:"totp"});
   if(error){S.err=error.message;S.screen="login";return render()}
@@ -113,7 +113,7 @@ async function verify(){const{error}=await sb.auth.mfa.challengeAndVerify({facto
  if(error){S.err="That code didn't work. Try the newest code from your app.";return render()}
  S.err="";await load()}
 async function signOut(){await sb.auth.signOut();Object.assign(S,{screen:"login",user:null,roles:[],emps:[],imp:null,err:"",em:""});render()}
-if(priv&&!factor&&C.requireMfa!==false){
+
 // ---------- Data ----------
 async function load(){
  const{data:me}=await sb.from("employees").select("*").eq("user_id",S.user.id).maybeSingle();S.me=me;
